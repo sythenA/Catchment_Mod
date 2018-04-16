@@ -43,38 +43,86 @@ class c_transition:
     def getMaxTime(self):
         return 1.0 + self.Lambda
 
-    def t4DepInt(self):
+    def t4XInt(self, t):
+        ms = self.ms
+        dt = t/20.
+        ct = 0.
+        intVal = 0.0
+
+        for i in range(1, 20):
+            ct = i*dt
+            if i % 2 == 0:
+                intVal += 2*ms*self.t4DepInt(ct)**(ms-1)
+            else:
+                intVal += 4*ms*self.t4DepInt(ct)**(ms-1)
+
+        return dt*intVal/3.
+
+    def t4DepInt(self, t):
+        dt = t/20.
+        intVal = self.getSideInflow(0)
+        for i in range(1, 20):
+            ct = i*dt
+            if i % 2 != 0:
+                intVal += 4*self.getSideInflow(ct)
+            else:
+                intVal += 2*self.getSideInflow(ct)
+
+        return dt*intVal/3.
+
+    def getT4(self):
+        print "getting t4:"
+
+        def function(t):
+            ms = self.ms
+            Lambda = self.Lambda
+            f = Lambda**ms - self.t4XInt(t)
+            return f
+
         Ulim = 1.0
         Llim = 0.0
+        Err = abs(Ulim - Llim)
+        while Err > 1.0E-6:
+            f = function(0.5*(Ulim + Llim))
+            if f < 0:
+                Ulim = 0.5*(Ulim + Llim)
+            elif f > 0:
+                Llim = 0.5*(Ulim + Llim)
+            elif f == 0:
+                return 0.5*(Ulim + Llim)
+            Err = abs(Ulim - Llim)
+            print Ulim, Llim
+
+        val = (Ulim + Llim)*0.5
+        print "t4 = %f" % val
+        return val
+
+    def sideInt(self, x0, t):
+        mc = self.mc
+        dt = t/20.0
+        val = ((x0/self.k)**(1./mc))**(mc-1)
+
+        for i in range(1, 21):
+            ct = dt*i
+            if i % 2 == 0:
+                val += 2*((x0/self.k)**(1./mc) + ct)**(mc-1)
+            else:
+                val += 4*((x0/self.k)**(1./mc) + ct)**(mc-1)
+
+        return dt*val/3.
 
     def getSideInflow(self, t):
         mc = self.mc
-        def depthInt(x0, t):
-            mc = self.mc
-            dt = t/200.0
-            box = np.zeros(201)
-
-            for i in range(0, 201):
-                ct = dt*i
-                box[i] = ((x0/self.k)**(1./mc) + ct)**(mc-1)
-
-            for j in range(1, 201):
-                if j % 2 == 0:
-                    box[j] = 2*box[j]
-                elif j % 2 != 0:
-                    box[j] = 4*box[j]
-
-            return dt*sum(box)/3.
 
         def function(x0, t):
-            f = 1.0 - x0 - self.mc*depthInt(x0, t)
+            f = 1.0 - x0 - self.mc*self.sideInt(x0, t)
             return f
 
         Ulim = 1.0
         Llim = 0.0
         Err = 1.0
 
-        while Err > 1.0E-8:
+        while Err > 1.0E-6:
             x0 = 0.5*(Ulim + Llim)
             f = function(x0, t)
             if f < 0:
@@ -88,10 +136,68 @@ class c_transition:
 
         return ((x0/self.k)**(1./mc) + t)**mc
 
+    def phase1Int(self, xs, t):
+        ms = self.ms
+        dt = t/20.
+        val = ((xs/self.k)**(1/ms) + self.Lambda**-1*self.t4DepInt(t))**(ms-1)
+
+        for i in range(1, 20):
+            ct = i*dt
+            if i % 2 == 0:
+                val += 2*((xs/self.k)**(1/ms) +
+                          self.Lambda**-1*self.t4DepInt(ct))**(ms-1)
+            else:
+                val += 4*((xs/self.k)**(1/ms) +
+                          self.Lambda**-1*self.t4DepInt(ct))**(ms-1)
+
+        return dt*val/3.
+
+    def phase1(self, t, init_U):
+        def function(xs, t):
+            ms = self.ms
+            Lambda = self.Lambda
+            f = Lambda - Lambda*xs - ms*self.phase1Int(xs, t)
+            return f
+
+        ms = self.ms
+        Ulim = init_U
+        if init_U > 0.6:
+            Llim = 0.5
+        else:
+            Llim = 0.0
+        Err = abs(Ulim - Llim)
+
+        while Err > 1.0E-4:
+            f = function(0.5*(Ulim + Llim), t)
+            if f > 0:
+                Llim = 0.5*(Ulim + Llim)
+            elif f < 0:
+                Ulim = 0.5*(Ulim + Llim)
+            elif f == 0:
+                return 0.5*(Ulim + Llim)
+            Err = abs(Ulim - Llim)
+            print Ulim, Llim
+
+        xs = 0.5*(Ulim + Llim)
+
+        A = (xs/self.k)**(1/ms) + self.Lambda**-1*self.t4DepInt(t)
+
+        return A**ms, xs
+
     def run(self):
-        t = 0
         tmax = self.getMaxTime()*self.tc
+        self.t4 = self.getT4()
 
         dt = self.dt
+        t = dt
         outQ = list()
         outQ.append([0.0, self.Q_max/self.k])
+
+        xs = 1.0
+        while t <= tmax:
+            if t <= self.t4*self.tc:
+                ct = t/self.tc
+                Q, xs = self.phase1(ct, xs)
+                outQ.append([t, Q])
+                print t, Q
+            t += dt
