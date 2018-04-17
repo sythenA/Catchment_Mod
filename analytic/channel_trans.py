@@ -45,30 +45,32 @@ class c_transition:
 
     def t4XInt(self, t):
         ms = self.ms
-        dt = t/20.
+        dt = t/50.
         ct = 0.
         intVal = 0.0
 
-        for i in range(1, 20):
+        for i in range(1, 50):
             ct = i*dt
             if i % 2 == 0:
                 intVal += 2*ms*self.t4DepInt(ct)**(ms-1)
             else:
-                intVal += 4*ms*self.t4DepInt(ct)**(ms-1)
+                intVal += 3*ms*self.t4DepInt(ct)**(ms-1)
+        intVal += ms*self.t4DepInt(t)**(ms-1)
 
-        return dt*intVal/3.
+        return dt*3*intVal/8.
 
     def t4DepInt(self, t):
-        dt = t/20.
+        dt = t/50.
         intVal = self.getSideInflow(0)
-        for i in range(1, 20):
+        for i in range(1, 50):
             ct = i*dt
             if i % 2 != 0:
-                intVal += 4*self.getSideInflow(ct)
+                intVal += 3*self.getSideInflow(ct)
             else:
                 intVal += 2*self.getSideInflow(ct)
+        intVal += self.getSideInflow(t)
 
-        return dt*intVal/3.
+        return dt*3*intVal/8.
 
     def getT4(self):
         print "getting t4:"
@@ -99,17 +101,18 @@ class c_transition:
 
     def sideInt(self, x0, t):
         mc = self.mc
-        dt = t/20.0
+        dt = t/50.0
         val = ((x0/self.k)**(1./mc))**(mc-1)
 
-        for i in range(1, 21):
+        for i in range(1, 50):
             ct = dt*i
             if i % 2 == 0:
                 val += 2*((x0/self.k)**(1./mc) + ct)**(mc-1)
             else:
-                val += 4*((x0/self.k)**(1./mc) + ct)**(mc-1)
+                val += 3*((x0/self.k)**(1./mc) + ct)**(mc-1)
+        val += ((x0/self.k)**(1./mc) + t)**(mc-1)
 
-        return dt*val/3.
+        return dt*3*val/8.
 
     def getSideInflow(self, t):
         mc = self.mc
@@ -122,7 +125,7 @@ class c_transition:
         Llim = 0.0
         Err = 1.0
 
-        while Err > 1.0E-6:
+        while Err > 1.0E-8:
             x0 = 0.5*(Ulim + Llim)
             f = function(x0, t)
             if f < 0:
@@ -138,19 +141,20 @@ class c_transition:
 
     def phase1Int(self, xs, t):
         ms = self.ms
-        dt = t/20.
+        dt = t/50.
         val = ((xs/self.k)**(1/ms) + self.Lambda**-1*self.t4DepInt(t))**(ms-1)
 
-        for i in range(1, 20):
+        for i in range(1, 50):
             ct = i*dt
             if i % 2 == 0:
                 val += 2*((xs/self.k)**(1/ms) +
                           self.Lambda**-1*self.t4DepInt(ct))**(ms-1)
             else:
-                val += 4*((xs/self.k)**(1/ms) +
+                val += 3*((xs/self.k)**(1/ms) +
                           self.Lambda**-1*self.t4DepInt(ct))**(ms-1)
+        val += ((xs/self.k)**(1/ms) + self.Lambda**-1*self.t4DepInt(t))**(ms-1)
 
-        return dt*val/3.
+        return dt*3*val/8.
 
     def phase1(self, t, init_U):
         def function(xs, t):
@@ -174,15 +178,107 @@ class c_transition:
             elif f < 0:
                 Ulim = 0.5*(Ulim + Llim)
             elif f == 0:
-                return 0.5*(Ulim + Llim)
+                break
             Err = abs(Ulim - Llim)
-            print Ulim, Llim
+            # print Ulim, Llim
 
         xs = 0.5*(Ulim + Llim)
 
         A = (xs/self.k)**(1/ms) + self.Lambda**-1*self.t4DepInt(t)
 
         return A**ms, xs
+
+    def phase2DepInt(self, t1, t):
+        dt = (t - t1)/50.0
+        val = self.getSideInflow(t1)
+
+        for i in range(1, 50):
+            ct = t1 + dt*i
+            if i % 2 == 0:
+                val += 2*self.getSideInflow(ct)
+            else:
+                val += 3*self.getSideInflow(ct)
+        val += self.getSideInflow(t)
+
+        # print t, t1, val*dt/3./self.Lambda
+        return val*3*dt/8.
+
+    def phase2XInt(self, t1, t):
+        dt = (t - t1)/50.0
+        ms = self.ms
+        val = 0
+
+        for i in range(1, 50):
+            ct = t1 + dt*i
+            if i % 2 == 0:
+                val += 2*self.phase2DepInt(t1, ct)**(ms-1)
+            else:
+                val += 3*self.phase2DepInt(t1, ct)**(ms-1)
+        val += self.phase2DepInt(t1, t)**(ms-1)
+
+        return val*3*dt/8.
+
+    def phase2(self, t, init_t1):
+        Ulim = t
+        Llim = init_t1
+
+        Lambda = self.Lambda
+        ms = self.ms
+        Err = abs(Ulim - Llim)
+
+        while Err > 1.0E-6:
+            f = Lambda**1.5 - ms*self.phase2XInt(0.5*(Ulim + Llim), t)
+            if f > 0:
+                Ulim = 0.5*(Ulim + Llim)
+            elif f < 0:
+                Llim = 0.5*(Ulim + Llim)
+            elif f == 0:
+                break
+            Err = abs(Ulim - Llim)
+
+        t1 = 0.5*(Ulim + Llim)
+        A = Lambda**-1*self.phase2DepInt(t1, t)
+
+        return A**ms, t1
+
+    def phase3XInt(self, t, t0):
+        dt = (t - 1.0)/50.0
+        ms = self.ms
+
+        val = (self.phase2DepInt(t0, 1.0))**(ms-1)
+        for i in range(1, 50):
+            ct = 1.0 + dt*i
+            if i % 2 == 0:
+                val += 2*(self.phase2DepInt(t0, 1.0) + (ct-1.0))**(ms-1)
+            else:
+                val += 3*(self.phase2DepInt(t0, 1.0) + (ct-1.0))**(ms-1)
+        val += (self.phase2DepInt(t0, 1.0) + (t-1.0))**(ms-1)
+
+        return val*3*dt/8.
+
+    def phase3(self, t, init_L):
+        Ulim = 1.0
+        Llim = init_L
+        Lambda = self.Lambda
+        ms = self.ms
+
+        Err = abs(Ulim - Llim)
+        while Err > 1.0E-6:
+            f = Lambda**1.5 - ms*(self.phase3XInt(t, 0.5*(Ulim + Llim)) +
+                                  self.phase2XInt(0.5*(Ulim + Llim), 1.0))
+            if f > 0:
+                Ulim = 0.5*(Ulim + Llim)
+            elif f < 0:
+                Llim = 0.5*(Ulim + Llim)
+            elif f == 0:
+                break
+            Err = abs(Ulim - Llim)
+            print f, Ulim, Llim
+
+        t0 = 0.5*(Ulim + Llim)
+        A = Lambda**-1*(self.phase2DepInt(t0, 1.0) + (t - 1.0))
+
+        return A**ms, t0
 
     def run(self):
         tmax = self.getMaxTime()*self.tc
@@ -194,10 +290,28 @@ class c_transition:
         outQ.append([0.0, self.Q_max/self.k])
 
         xs = 1.0
+        t1 = 0.0
+        t0 = self.t4
         while t <= tmax:
-            if t <= self.t4*self.tc:
+            if t < self.t4*self.tc:
                 ct = t/self.tc
                 Q, xs = self.phase1(ct, xs)
                 outQ.append([t, Q])
-                print t, Q
+                print "current time = %f, flowrate = %f" % (t, Q)
+            elif t >= self.t4*self.tc and t <= self.tc:
+                ct = t/self.tc
+                Q, t1 = self.phase2(ct, t1)
+                outQ.append([t, Q])
+                print "current time = %f, flowrate = %f" % (t, Q)
+            elif t > self.tc:
+                ct = t/self.tc
+                Q, t0 = self.phase3(ct, t0)
+                outQ.append([t, Q])
+                print "\n"
+                print "current time = %f, flowrate = %f" % (t, Q)
+                print "\n"
             t += dt
+
+        outQ = np.array(outQ)
+        outQ[:, 1] = outQ[:, 1]*self.Q_max
+        self.outQ = outQ
